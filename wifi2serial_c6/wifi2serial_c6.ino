@@ -113,27 +113,27 @@ String cdc_config, cdc_prevconfig;
 void print_stat(void) {
   const char *mode_s[] = { "Off", "AP", "STA" };
   const char *serprot_s[] = { "Off", "PUSR", "LsrMstIns" };
-  Serial.printf("Status:\n Mode is %s\n", mode_s[info.mode]);
+  Serial.printf("Status:\n Mode is %s\r\n", mode_s[info.mode]);
   switch (info.mode) {
     case 0:
-      Serial.println("WiFi off");
+      Serial.print("WiFi off\r\n");
       break;
     case 1:  // AP
-      Serial.printf(" Hostname is %s\n", info.hostname); 
-      Serial.printf(" AP is '%s' with '%s'\n", info.ssid, pass(info.psk).c_str());
-      Serial.printf(" My IP is %s/%s\n", WiFi.softAPIP().toString().c_str(), WiFi.softAPSubnetMask().toString().c_str());
-      Serial.printf(" TCP server started at %s:%d\n", WiFi.softAPIP().toString().c_str(), info.port);
+      Serial.printf(" Hostname is %s\r\n", info.hostname); 
+      Serial.printf(" AP is '%s' with '%s'\r\n", info.ssid, pass(info.psk).c_str());
+      Serial.printf(" My IP is %s/%s\r\n", WiFi.softAPIP().toString().c_str(), WiFi.softAPSubnetMask().toString().c_str());
+      Serial.printf(" TCP server started at %s:%d\r\n", WiFi.softAPIP().toString().c_str(), info.port);
       break;
     case 2:  // STA
-      Serial.printf(" Hostname is %s\n", info.hostname); 
-      Serial.printf(" STA is '%s' with '%s'\n", info.ssid, pass(info.psk).c_str());
-      Serial.printf(" My IP is %s/%s\n", WiFi.localIP().toString().c_str(), WiFi.subnetMask().toString().c_str());
-      Serial.printf(" TCP server started at %s:%d\n", WiFi.localIP().toString().c_str(), info.port);
-      Serial.printf(" RSSI is %ddBm\n", WiFi.RSSI());
+      Serial.printf(" Hostname is %s\r\n", info.hostname); 
+      Serial.printf(" STA is '%s' with '%s'\r\n", info.ssid, pass(info.psk).c_str());
+      Serial.printf(" My IP is %s/%s\r\n", WiFi.localIP().toString().c_str(), WiFi.subnetMask().toString().c_str());
+      Serial.printf(" TCP server started at %s:%d\r\n", WiFi.localIP().toString().c_str(), info.port);
+      Serial.printf(" RSSI is %ddBm\r\n", WiFi.RSSI());
       break;
   }
-  Serial.printf(" UART protocol is %s\n", serprot_s[info.encprotocol]);
-  Serial.printf(" UART is %lubps %s\n", current_baud, current_serconfig.c_str());
+  Serial.printf(" UART protocol is %s\r\n", serprot_s[info.encprotocol]);
+  Serial.printf(" UART is %lubps %s\r\n", current_baud, current_serconfig.c_str());
 }
 
 uint32_t conv_str2serconfig(const char *s, char *d = NULL) {
@@ -172,9 +172,9 @@ void power(void) {
   if (err == ESP_OK) {
     Serial.print("Successfully set WiFi TX Power to: ");
     Serial.print(power_dbm);
-    Serial.println(" dBm");
+    Serial.print(" dBm\r\n");
   } else {
-    Serial.println("Failed to set WiFi TX Power.");
+    Serial.print("Failed to set WiFi TX Power.\r\n");
   }
 }
 
@@ -311,7 +311,7 @@ bool PUSR_portconfig_check(uint8_t *p) {
             current_serconfig = s;
             prevconf = config;
             prevbaud = baud;
-            Serial.printf("Update UART to %ubps %s\n", Serial1.baudRate(), tmp);
+            Serial.printf("Update UART to %ubps %s\r\n", Serial1.baudRate(), tmp);
           }
           return true;
         }
@@ -392,14 +392,14 @@ void LSRMSTINS_portconfig_check(uint8_t *pBuf, int len) {
                 subState++;
               } else {
                 baud = max(min((long)*(uint32_t *)baud_byte, _MAX_BAUDRATE), _MIN_BAUDRATE);
-                Serial.printf("BaudRate=%lu\n", baud);
+                Serial.printf("BaudRate=%lu\r\n", baud);
                 if (baud != prevbaud) {
                   Serial1.write(mybuf, mylen);
                   mylen = 0;
 
                   Serial1.flush();
                   Serial1.begin(baud, prevconf);
-                  Serial.printf("Update UART to *%ubps %s\n", Serial1.baudRate(), s.c_str());
+                  Serial.printf("Update UART to *%ubps %s\r\n", Serial1.baudRate(), s.c_str());
                   current_baud = baud;
                   prevbaud = baud;
                 }
@@ -419,7 +419,7 @@ void LSRMSTINS_portconfig_check(uint8_t *pBuf, int len) {
               subState++;
             } else if (subState == 3) {
               _stopBits = ch & 0xFF;
-              Serial.printf("ByteSize=%d Parity=%d StopBits=%d\n", _byteSize, _parity, _stopBits);
+              Serial.printf("ByteSize=%d Parity=%d StopBits=%d\r\n", _byteSize, _parity, _stopBits);
               s[0] = databits_s[max(min(_byteSize - 5, 3), 0)];
               s[1] = parity_s[max(min(_parity, 4), 0)];
               s[2] = stopbit_s[max(min(_stopBits, 2), 0)];
@@ -431,7 +431,7 @@ void LSRMSTINS_portconfig_check(uint8_t *pBuf, int len) {
 
                 Serial1.flush();
                 Serial1.begin(prevbaud, config);
-                Serial.printf("Update UART to %ubps *%s\n", Serial1.baudRate(), tmp);
+                Serial.printf("Update UART to %ubps *%s\r\n", Serial1.baudRate(), tmp);
                 current_serconfig = s;
                 prevconf = config;
               }
@@ -506,7 +506,7 @@ void CommandProc(bool waitforexit) {
 
       // Save default values to NVM
       case 'f':
-        Serial.println("Reset NVM settings");
+        Serial.print("Reset NVM settings\r\n");
         if (are_you_sure()) {
           preferences.begin("wifi2serial", false);
           preferences.putBytes("netinfo", &default_netinfo, sizeof(TNetInfo));
@@ -514,11 +514,11 @@ void CommandProc(bool waitforexit) {
           preferences.end();
           reboot();
         } else
-          Serial.printf("canceled\n");
+          Serial.printf("canceled\r\n");
         break;
       // Settings
       case 's':
-        Serial.printf("Configure network settings\n");
+        Serial.printf("Configure network settings\r\n");
         memset(bu, 0, sizeof(bu));
         memset(b, 0, sizeof(b));
         memset(bc, 0, sizeof(b));
@@ -561,21 +561,21 @@ void CommandProc(bool waitforexit) {
             us_gets(bc, 3);
             conv_str2serconfig(bc, bc);
 
-            Serial.println("Input values");
-            Serial.printf(" hostname:%s\n", bu[0]);
-            Serial.printf(" mode:%d\n", mode);
-            Serial.printf(" ssid:%s\n", bu[1]);
-            Serial.printf(" psk :%s\n", pass(bu[2]).c_str());
+            Serial.print("Input values\r\n");
+            Serial.printf(" hostname:%s\r\n", bu[0]);
+            Serial.printf(" mode:%d\r\n", mode);
+            Serial.printf(" ssid:%s\r\n", bu[1]);
+            Serial.printf(" psk :%s\r\n", pass(bu[2]).c_str());
             if (strlen(bu[3]) == 0) strcpy(bu[3], "0.0.0.0");
             ip.fromString(bu[3]);
-            Serial.printf(" ip  :%s\n", ip.toString().c_str());
+            Serial.printf(" ip  :%s\r\n", ip.toString().c_str());
             if (strlen(bu[4]) == 0) strcpy(bu[4], "0.0.0.0");
             ip.fromString(bu[4]);
-            Serial.printf(" mask:%s\n", ip.toString().c_str());
-            Serial.printf(" port:%d\n", port);
-            Serial.printf(" serial protocol:%d\n", protocol);
-            Serial.printf(" serial baudrate:%lu\n", baudrate);
-            Serial.printf(" serial config:%s\n", bc);
+            Serial.printf(" mask:%s\r\n", ip.toString().c_str());
+            Serial.printf(" port:%d\r\n", port);
+            Serial.printf(" serial protocol:%d\r\n", protocol);
+            Serial.printf(" serial baudrate:%lu\r\n", baudrate);
+            Serial.printf(" serial config:%s\r\n", bc);
             if (are_you_sure()) {
               info.mode = mode;
               strncpy(info.hostname, bu[0], sizeof(info.hostname) - 1);
@@ -592,11 +592,11 @@ void CommandProc(bool waitforexit) {
               preferences.end();
               reboot();
             } else
-              Serial.printf("canceled\n");
+              Serial.printf("canceled\r\n");
           } else
-            Serial.printf("canceled\n");
+            Serial.printf("canceled\r\n");
         } else
-          Serial.printf("canceled\n");
+          Serial.printf("canceled\r\n");
         break;
     }
   }
@@ -644,17 +644,17 @@ void setup() {
       power();
       WiFi.softAPConfig(info.ip, info.ip, info.mask);
       WiFi.softAP(info.ssid, info.psk, 1, 0, 1);
-      Serial.printf("My AP is '%s' with '%s'\n", info.ssid, info.psk);
-      Serial.printf("My IP is %s:%d\n", WiFi.softAPIP().toString(), info.port);
+      Serial.printf("My AP is '%s' with '%s'\r\n", info.ssid, info.psk);
+      Serial.printf("My IP is %s:%d\r\n", WiFi.softAPIP().toString(), info.port);
 
       if (!MDNS.begin(info.hostname)) {
-        Serial.println("Error starting mDNS service!");
+        Serial.print("Error starting mDNS service!\r\n");
         while(1);
       }
       break;
     case 2:  // STA mode
       WiFi.setHostname(info.hostname);
-      Serial.printf("Connect to '%s' with '%s'\n", info.ssid, pass(info.psk).c_str());
+      Serial.printf("Connect to '%s' with '%s'\r\n", info.ssid, pass(info.psk).c_str());
       WiFi.mode(WIFI_STA);
       power();
       WiFi.begin(info.ssid, info.psk);
@@ -665,7 +665,7 @@ void setup() {
         CommandProc(false);
         if (millis() > t) {
           WiFi.disconnect();
-          Serial.printf("Retry\n");
+          Serial.printf("Retry\r\n");
           WiFi.reconnect();
           t = millis() + CONNECT_TIMEOUT_MS;
         }
@@ -674,10 +674,10 @@ void setup() {
         cled ^= 1;
         delay(100);
       }
-      Serial.printf("Connected to %s\n", info.ssid);
+      Serial.printf("Connected to %s\r\n", info.ssid);
 
       if (!MDNS.begin(info.hostname)) {
-        Serial.println("Error starting mDNS service!");
+        Serial.print("Error starting mDNS service!\r\n");
         while(1);
       }
 
@@ -688,7 +688,7 @@ void setup() {
     server = new WiFiServer(info.port);
     server->begin();
     server->setNoDelay(true);
-    Serial.printf("Listening at %s:%d\n", WiFi.localIP().toString().c_str(), info.port);
+    Serial.printf("Listening at %s:%d\r\n", WiFi.localIP().toString().c_str(), info.port);
   }
 }
 
@@ -709,9 +709,9 @@ void loop() {
     case 0:
       // When WiFi is off, pressing the boot switch enables setting changes
       if (digitalRead(BOOT_PIN) == LOW) {
-        Serial.print("\nEnter config mode\n");
+        Serial.print("\r\nEnter config mode\r\n");
         CommandProc(true);
-        Serial.print("\nExit config mode\n");
+        Serial.print("\r\nExit config mode\r\n");
       }
 
       // Transfer data received from UART directly to USB
@@ -769,7 +769,7 @@ void loop() {
           client.setSocketOption(client.fd(), TCP_KEEPINTVL, (void *)&keepInterval, sizeof(keepInterval));
           client.setSocketOption(client.fd(), TCP_KEEPCNT, (void *)&keepCount, sizeof(keepCount));
 
-          Serial.printf("New client(%s:%d) connected\n", client.remoteIP().toString().c_str(), client.remotePort());
+          Serial.printf("New client(%s:%d) connected\r\n", client.remoteIP().toString().c_str(), client.remotePort());
           prev_connected = true;
           cliIP = client.remoteIP();
           cliPort = client.remotePort();
@@ -827,7 +827,7 @@ void loop() {
       } else {
         if (prev_connected) {
           prev_connected = false;
-          Serial.printf("Client(%s:%d) disconnected\n", cliIP.toString().c_str(), cliPort);
+          Serial.printf("Client(%s:%d) disconnected\r\n", cliIP.toString().c_str(), cliPort);
           if (client) client.stop();
         }
         uint32_t t = millis();
