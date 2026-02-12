@@ -113,7 +113,7 @@ String cdc_config, cdc_prevconfig;
 void print_stat(void) {
   const char *mode_s[] = { "Off", "AP", "STA" };
   const char *serprot_s[] = { "Off", "PUSR", "LsrMstIns" };
-  Serial.printf("Status:\n Mode is %s\r\n", mode_s[info.mode]);
+  Serial.printf("Status:\r\n Mode is %s\r\n", mode_s[info.mode]);
   switch (info.mode) {
     case 0:
       Serial.print("WiFi off\r\n");
