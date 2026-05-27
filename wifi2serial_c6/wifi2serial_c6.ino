@@ -70,8 +70,8 @@ typedef struct {
   uint8_t mode;         // 0:OFF 1:AP 2:STA
   char ssid[64];        // SSID
   char psk[64];         // Password
-  IPAddress ip;         // IP address
-  IPAddress mask;       // Net mask
+  uint32_t ip;          // IP address
+  uint32_t mask;        // Net mask
   uint16_t port;        // Port for client connection
   uint8_t encprotocol;  // 0:OFF 1:PUSR 2:LsrMstInsert
   uint32_t baudrate;    // default baudrate
@@ -83,8 +83,8 @@ const TNetInfo default_netinfo = {
   1,                            // WiFi operating mode
   "Xiao_wifi2Serial",           // SSID
   "12345678",                   // PSK
-  IPAddress(10, 0, 0, 1),       // Pico's IP address
-  IPAddress(255, 255, 255, 0),  // Pico's IP mask
+  (uint32_t)IPAddress(10, 0, 0, 1),       // Pico's IP address
+  (uint32_t)IPAddress(255, 255, 255, 0),  // Pico's IP mask
   23,                           // Client connection port
 
   0,       // Method for including baudrate and configuration in serial data from a PC
@@ -99,9 +99,14 @@ const char *stopbit_s = "12";
 TNetInfo info;
 Preferences preferences;
 WiFiServer *server = NULL;
-WiFiClient client;
+#define MAX_CLIENTS 4
+WiFiClient clients[MAX_CLIENTS];
 uint32_t current_baud;
 String current_serconfig;
+
+uint32_t last_comm_time = 0;
+wifi_ps_type_t current_ps_mode = WIFI_PS_MAX_MODEM;
+const uint32_t PS_IDLE_TIMEOUT_MS = 30000;
 
 uint32_t cdc_baud, cdc_prevbaud;
 String cdc_config, cdc_prevconfig;
@@ -109,6 +114,14 @@ String cdc_config, cdc_prevconfig;
 //---------------------
 // etc
 //---------------------
+// Force a kick to send data from the HW FIFO to the host
+void flush_usb() {
+//  Serial.flush();
+#if defined(CONFIG_IDF_TARGET_ESP32C6) || defined(CONFIG_IDF_TARGET_ESP32S3)
+  USB_SERIAL_JTAG.ep1_conf.wr_done = 1;
+#endif
+}
+
 // Display current settings and current status in the terminal
 void print_stat(void) {
   const char *mode_s[] = { "Off", "AP", "STA" };
@@ -134,8 +147,10 @@ void print_stat(void) {
   }
   Serial.printf(" UART protocol is %s\r\n", serprot_s[info.encprotocol]);
   Serial.printf(" UART is %lubps %s\r\n", current_baud, current_serconfig.c_str());
+  flush_usb();
 }
 
+// Extract serial settings from a string
 uint32_t conv_str2serconfig(const char *s, char *d = NULL) {
   struct {
     const char *str;
@@ -166,23 +181,50 @@ uint32_t conv_str2serconfig(const char *s, char *d = NULL) {
 
 // Changing the ESP32's WiFi output (not sure if it's even necessary)
 void power(void) {
+  esp_wifi_set_ps(WIFI_PS_MAX_MODEM); 
+
   int8_t power_dbm = 15;
   int8_t power_param = (int8_t)(power_dbm / 0.25);
   esp_err_t err = esp_wifi_set_max_tx_power(power_param);
+
   if (err == ESP_OK) {
-    Serial.print("Successfully set WiFi TX Power to: ");
-    Serial.print(power_dbm);
-    Serial.print(" dBm\r\n");
+    Serial.print("WiFi Power configured: PS_NONE, TX_POWER 15dBm\r\n");
+  }
+}
+
+// Changing the Power-Saving Mode Level
+void manage_wifi_power_save(void) {
+  if (info.mode == 0) return;
+
+  int active_clients = 0;
+  for (int i = 0; i < MAX_CLIENTS; i++) {
+    if (clients[i] && clients[i].connected()) {
+      active_clients++;
+    }
+  }
+
+  wifi_ps_type_t target_ps;
+
+  if (active_clients == 0) {
+    target_ps = WIFI_PS_MAX_MODEM;
+  } else if (millis() - last_comm_time > PS_IDLE_TIMEOUT_MS) {
+    target_ps = WIFI_PS_MIN_MODEM;
   } else {
-    Serial.print("Failed to set WiFi TX Power.\r\n");
+    target_ps = WIFI_PS_NONE;
+  }
+
+  if (target_ps != current_ps_mode) {
+    esp_wifi_set_ps(target_ps);
+    current_ps_mode = target_ps;
+    Serial.printf("WiFi PS Mode updated: %d\r\n", target_ps);
   }
 }
 
 // Reboot
 void reboot(void) {
-  if (client) {
-    if (client.connected()) client.stop();
-  }
+  for (int i = 0; i < MAX_CLIENTS; i++)
+    if (clients[i] && clients[i].connected()) clients[i].stop();
+
   WiFi.disconnect();
   Serial.end();
   delay(200);
@@ -192,9 +234,9 @@ void reboot(void) {
 }
 
 void bootloader(void) {
-  if (client) {
-    if (client.connected()) client.stop();
-  }
+  for (int i = 0; i < MAX_CLIENTS; i++)
+    if (clients[i] && clients[i].connected()) clients[i].stop();
+
   WiFi.disconnect();
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
   REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
@@ -231,41 +273,38 @@ static void usbEventCallback(void *arg, esp_event_base_t event_base, int32_t eve
         break;
     }
   }
-#elif defined(CONFIG_IDF_TARGET_ESP32C6)
-  if (event_base == ARDUINO_HW_CDC_EVENTS) {
-    switch (event_id) {
-      case ARDUINO_HW_CDC_ANY_EVENT:
-        Serial1.println("CDC EVENT:: ARDUINO_HW_CDC_ANY_EVENT");
-        break;
-      case ARDUINO_HW_CDC_MAX_EVENT:
-        Serial1.println("CDC EVENT:: ARDUINO_HW_CDC_MAX_EVENT");
-        break;
-
-      case ARDUINO_HW_CDC_CONNECTED_EVENT:
-        Serial1.println("CDC EVENT:: ARDUINO_HW_CDC_CONNECTED_EVENT");
-        break;
-      case ARDUINO_HW_CDC_BUS_RESET_EVENT:
-        Serial1.println("CDC EVENT:: ARDUINO_HW_CDC_BUS_RESET_EVENT");
-        break;
-      case ARDUINO_HW_CDC_RX_EVENT:
-        Serial1.println("\nCDC EVENT:: ARDUINO_HW_CDC_RX_EVENT");
-        // sends all bytes read from USB Hardware Serial to UART0
-        //        while (HWCDCSerial.available()) {
-        //          Serial.write(HWCDCSerial.read());
-        //        }
-        break;
-      case ARDUINO_HW_CDC_TX_EVENT:
-        Serial1.println("CDC EVENT:: ARDUINO_HW_CDC_TX_EVENT");
-        break;
-
-      default:
-        Serial1.println("CDC EVENT:: default");
-        break;
-    }
-  } else {
-    Serial1.printf("EVENT:: ???(%d)", event_base);
-  }
 #endif
+}
+#endif
+
+#if defined(CONFIG_IDF_TARGET_ESP32C6)
+#include "soc/usb_serial_jtag_reg.h"
+void poll_usb_line_coding() {
+  if (REG_READ(USB_SERIAL_JTAG_INT_RAW_REG) & USB_SERIAL_JTAG_SET_LINE_CODE_INT_RAW) {
+    uint32_t baud      = USB_SERIAL_JTAG.set_line_code_w0.dw_dte_rate;
+    uint8_t  data_bits = USB_SERIAL_JTAG.set_line_code_w1.bdata_bits;
+    uint8_t  parity    = USB_SERIAL_JTAG.set_line_code_w1.bparity_type;
+    uint8_t  stop_bits = USB_SERIAL_JTAG.set_line_code_w1.bchar_format;
+    REG_WRITE(USB_SERIAL_JTAG_INT_CLR_REG, USB_SERIAL_JTAG_SET_LINE_CODE_INT_CLR);
+    static uint32_t pending_baud = 115200; 
+    // If a valid value is entered for W0 (baud rate), simply save it and wait
+    if (baud > 0) {
+      pending_baud = baud;
+    }
+    // If a valid value is entered in W1 (Line Control), the confirmation process is performed here for the first time.
+    // (According to the CDC-ACM specification, data_bits are bits 5 through 8, so the value must be greater than 0.)
+    if (data_bits > 0) {
+      String s = "   ";
+      s[0] = databits_s[max(min((int)data_bits, 8), 5) - 5];
+      s[1] = parity_s[max(min((int)parity, 4), 0)];
+      s[2] = stopbit_s[max(min((int)stop_bits, 1), 0)];
+      // Combine the baud rate (pending_baud) stored in memory with the line control received this time
+
+      cdc_baud = max(min(pending_baud, (uint32_t)_MAX_BAUDRATE), (uint32_t)_MIN_BAUDRATE);
+      cdc_config = s;
+//      Serial.printf("USB Host Config Updated: %lubps %s\r\n", cdc_baud, cdc_config.c_str());
+    }
+  }
 }
 #endif
 
@@ -312,6 +351,7 @@ bool PUSR_portconfig_check(uint8_t *p) {
             prevconf = config;
             prevbaud = baud;
             Serial.printf("Update UART to %ubps %s\r\n", Serial1.baudRate(), tmp);
+            flush_usb();
           }
           return true;
         }
@@ -523,6 +563,7 @@ void CommandProc(bool waitforexit) {
         memset(b, 0, sizeof(b));
         memset(bc, 0, sizeof(b));
         Serial.print("Select WiFi mode (0:Off 1:AP 2:STA)=");
+        flush_usb();
         if (us_gets(b, sizeof(b)) > 0 && strlen(b) > 0) {
           s = b;
           mode = s.toInt();
@@ -579,14 +620,18 @@ void CommandProc(bool waitforexit) {
             if (are_you_sure()) {
               info.mode = mode;
               strncpy(info.hostname, bu[0], sizeof(info.hostname) - 1);
+              info.hostname[sizeof(info.hostname) - 1] = '\0';
               strncpy(info.ssid, bu[1], sizeof(info.ssid) - 1);
+              info.ssid[sizeof(info.ssid) - 1] = '\0';
               strncpy(info.psk, bu[2], sizeof(info.psk) - 1);
-              info.ip.fromString(bu[3]);
-              info.mask.fromString(bu[4]);
+              info.psk[sizeof(info.psk) - 1] = '\0';
+              info.ip = (uint32_t)ip.fromString(bu[3]);
+              info.mask =(uint32_t) ip.fromString(bu[4]);
               info.port = port;
               info.encprotocol = protocol;
               info.baudrate = baudrate;
               strncpy(info.serconfig, bc, sizeof(info.serconfig) - 1);
+              info.serconfig[sizeof(info.serconfig) - 1] = '\0';
               preferences.begin("wifi2serial", false);
               preferences.putBytes("netinfo", &info, sizeof(TNetInfo));
               preferences.end();
@@ -634,7 +679,9 @@ void setup() {
   switch (info.mode) {
     case 0:  // USB UART mode
 #ifdef USBBRIDGE
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
       HWCDCSerial.onEvent(usbEventCallback);
+#endif
       HWCDCSerial.begin();
 #endif
       break;
@@ -642,7 +689,7 @@ void setup() {
       WiFi.setHostname(info.hostname);
       WiFi.mode(WIFI_AP);
       power();
-      WiFi.softAPConfig(info.ip, info.ip, info.mask);
+      WiFi.softAPConfig(IPAddress(info.ip), IPAddress(info.ip), IPAddress(info.mask));
       WiFi.softAP(info.ssid, info.psk, 1, 0, 1);
       Serial.printf("My AP is '%s' with '%s'\r\n", info.ssid, info.psk);
       Serial.printf("My IP is %s:%d\r\n", WiFi.softAPIP().toString(), info.port);
@@ -701,7 +748,6 @@ void loop() {
   static uint32_t blink_t = 0;
   static uint32_t idle_t = 0;
   static uint8_t buf[2048];
-  static IPAddress cliIP;
   static uint16_t cliPort;
   int l, ll;
 
@@ -714,12 +760,16 @@ void loop() {
         Serial.print("\r\nExit config mode\r\n");
       }
 
+#if defined(CONFIG_IDF_TARGET_ESP32C6)
+      poll_usb_line_coding();
+#endif
+
       // Transfer data received from UART directly to USB
       while ((l = Serial1.available()) > 0) {
         while ((ll = Serial1.readBytes(buf, min(sizeof(buf), l))) > 0) {
           l -= ll;
           Serial.write((uint8_t *)buf, ll);
-          Serial.flush();
+          flush_usb();
           txrx_led = true;
         }
       }
@@ -753,38 +803,46 @@ void loop() {
       break;
     case 1:
     case 2:
-        // Confirming the connection from the client
+      // Confirming the connection from the client
       if (server->hasClient()) {
-        if (!client || !client.connected()) {
-          if (client) client.stop();
-          client = server->accept();
-          client.setNoDelay(true);
-
-          int keepAlive = 1;
-          int keepIdle = 20;
-          int keepInterval = 5;
-          int keepCount = 3;
-          client.setSocketOption(client.fd(), TCP_KEEPALIVE, (void *)&keepAlive, sizeof(keepAlive));
-          client.setSocketOption(client.fd(), TCP_KEEPIDLE, (void *)&keepIdle, sizeof(keepIdle));
-          client.setSocketOption(client.fd(), TCP_KEEPINTVL, (void *)&keepInterval, sizeof(keepInterval));
-          client.setSocketOption(client.fd(), TCP_KEEPCNT, (void *)&keepCount, sizeof(keepCount));
-
-          Serial.printf("New client(%s:%d) connected\r\n", client.remoteIP().toString().c_str(), client.remotePort());
-          prev_connected = true;
-          cliIP = client.remoteIP();
-          cliPort = client.remotePort();
+        WiFiClient newClient = server->accept();
+        newClient.setNoDelay(true);
+        
+        bool accepted = false;
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+          if (!clients[i] || !clients[i].connected()) {
+            if (clients[i]) clients[i].stop();
+            clients[i] = newClient;
+            
+            // KeepAlive設定
+            int keepAlive = 1, keepIdle = 20, keepInterval = 5, keepCount = 3;
+            clients[i].setSocketOption(clients[i].fd(), TCP_KEEPALIVE, (void *)&keepAlive, sizeof(keepAlive));
+            clients[i].setSocketOption(clients[i].fd(), TCP_KEEPIDLE, (void *)&keepIdle, sizeof(keepIdle));
+            clients[i].setSocketOption(clients[i].fd(), TCP_KEEPINTVL, (void *)&keepInterval, sizeof(keepInterval));
+            clients[i].setSocketOption(clients[i].fd(), TCP_KEEPCNT, (void *)&keepCount, sizeof(keepCount));
+            
+            Serial.printf("New client(%s:%d) connected to slot %d\r\n", clients[i].remoteIP().toString().c_str(), clients[i].remotePort(), i);
+            accepted = true;
+            break;
+          }
+        }
+        
+        if (!accepted) {
+          Serial.printf("Client rejected: MAX_CLIENTS reached.\r\n");
+          newClient.stop();
         }
       }
-      if (client) {
-        if (client.connected()) {
+      for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i] && clients[i].connected()) {
           // Transfers data received from the socket directly to the UART
-          while ((l = client.available()) > 0) {
-            if ((ll = client.readBytes(buf, min(sizeof(buf), l))) > 0) {
+          while ((l = clients[i].available()) > 0) {
+            if ((ll = clients[i].readBytes(buf, min(sizeof(buf), l))) > 0) {
               l -= ll;
               switch (info.encprotocol) {
                 case 0:
                   Serial1.write(buf, ll);
                   txrx_led = true;
+                  last_comm_time = millis();
                   break;
                 case 1:
                   for (int j = 0; j < ll;) {
@@ -798,6 +856,7 @@ void loop() {
                     }
                     Serial1.write(buf[j++]);
                     txrx_led = true;
+                    last_comm_time = millis();
                   }
                   Serial1.flush();
                   break;
@@ -805,6 +864,7 @@ void loop() {
                   LSRMSTINS_portconfig_check(buf, ll);
                   Serial1.flush();
                   txrx_led = true;
+                  last_comm_time = millis();
                   break;
               }
             }
@@ -813,30 +873,23 @@ void loop() {
           while ((l = Serial1.available()) > 0) {
             while ((ll = Serial1.readBytes(buf, min(sizeof(buf), l))) > 0) {
               l -= ll;
-              client.write((uint8_t *)buf, ll);
+              for (int i = 0; i < MAX_CLIENTS; i++) {
+                if (clients[i] && clients[i].connected()) {
+                  clients[i].write((uint8_t *)buf, ll);
+                }
+              }
               txrx_led = true;
+              last_comm_time = millis();
             }
           }
-          if (txrx_led) {
-            blink_t = millis() + 10;
-            digitalWrite(LED_BUILTIN, 0);
-            txrx_led = false;
-          }
-          if (millis() > blink_t) digitalWrite(LED_BUILTIN, 1);
-        }
-      } else {
-        if (prev_connected) {
-          prev_connected = false;
-          Serial.printf("Client(%s:%d) disconnected\r\n", cliIP.toString().c_str(), cliPort);
-          if (client) client.stop();
-        }
-        uint32_t t = millis();
-        if (t > idle_t) {
-          idle_t = t + (digitalRead(LED_BUILTIN) ? 30 : 2970);
-          digitalWrite(LED_BUILTIN, digitalRead(LED_BUILTIN) ^ 1);
+        } else if (clients[i]) {
+          // 切断検知時の処理
+          Serial.printf("Client slot %d disconnected\r\n", i);
+          clients[i].stop();
         }
       }
       CommandProc(false);
+      manage_wifi_power_save();
       break;
   }
 }
