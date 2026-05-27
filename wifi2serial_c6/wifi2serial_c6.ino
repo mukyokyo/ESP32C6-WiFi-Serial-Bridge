@@ -114,10 +114,15 @@ String cdc_config, cdc_prevconfig;
 //---------------------
 // etc
 //---------------------
-// Force a kick to send data from the HW FIFO to the host
-void flush_usb() {
-//  Serial.flush();
+
+void flush_usb(void) {
 #if defined(CONFIG_IDF_TARGET_ESP32C6) || defined(CONFIG_IDF_TARGET_ESP32S3)
+  // Transfer all data from the software buffer to the hardware FIFO
+  Serial.flush(); 
+  //  If the hardware is currently transmitting (not free), please wait a moment until it finishes.
+  // *If you don't wait here, the state machine will break and the packet will be lost.
+  while (USB_SERIAL_JTAG.ep1_conf.serial_in_ep_data_free == 0) yield();
+  // Once safety has been confirmed, fire immediately without waiting for the timer.
   USB_SERIAL_JTAG.ep1_conf.wr_done = 1;
 #endif
 }
@@ -813,8 +818,7 @@ void loop() {
           if (!clients[i] || !clients[i].connected()) {
             if (clients[i]) clients[i].stop();
             clients[i] = newClient;
-            
-            // KeepAlive設定
+
             int keepAlive = 1, keepIdle = 20, keepInterval = 5, keepCount = 3;
             clients[i].setSocketOption(clients[i].fd(), TCP_KEEPALIVE, (void *)&keepAlive, sizeof(keepAlive));
             clients[i].setSocketOption(clients[i].fd(), TCP_KEEPIDLE, (void *)&keepIdle, sizeof(keepIdle));
