@@ -38,6 +38,11 @@ Perform various initial settings sequentially.
 
 Incidentally, the method for transmitting the LineCoding information inserted via WiFi is selected using the serial protocol. PUSR refers to PUSR's proprietary protocol, while LsrMstInsert refers to a stream activated by IOCTL_SERIAL_LSRMST_INSERT. You can choose one encoding method from these two types.
 
+Please note that the following improvements have been made in a recent update.
+ - Disable power-saving mode to improve Wi-Fi latency. If there is still no communication for a certain period of time, the device will switch to power-saving mode.
+ - Supports up to 4 client connections.
+ - When the baudrate or line control settings of the virtual COM port are changed on the PC while in USB-to-Serial mode, those settings are applied to the UART.
+
 ## Licence
 
 [MIT](https://github.com/mukyokyo/ESP32C6-WiFi-Serial-Bridge/blob/main/LICENSE.txt)
